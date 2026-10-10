@@ -220,6 +220,16 @@ web/src/
 
 ## 部署
 
+**当前线上地址**
+
+| 入口 | 状态 |
+|---|---|
+| `http://120.25.150.103/ielts/` | ✅ 已上线（子路径过渡入口，纯 IP 访问不受备案限制） |
+| `https://ielts.transistorsandtokens.com` | ⏳ 待 DNS：需在阿里云云解析加一条 A 记录 `ielts` → `120.25.150.103`，然后 `certbot --nginx -d ielts.transistorsandtokens.com` |
+
+服务器：阿里云 ECS（Ubuntu 24.04，`120.25.150.103`），代码在 `/data/data_home/xuyifan/IELTS-LearnPlat`，
+PM2 应用名 `ielts-workbench`（fork 模式，`127.0.0.1:3007`，已配开机自启）。
+
 架构：Node 只监听回环 `127.0.0.1:3007`，公网入口交给 Nginx；PM2 以 **fork** 模式跑（SQLite/WAL 是单写者模型，不要用 cluster）。
 
 ```bash
