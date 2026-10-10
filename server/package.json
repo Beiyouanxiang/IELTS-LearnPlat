@@ -1,0 +1,33 @@
+{
+  "name": "ielts-workbench-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "seed": "node scripts/seed-vocab.js",
+    "seed:books": "node scripts/seed-wordbooks.js",
+    "seed:content": "node scripts/seed-content.js",
+    "seed:all": "node scripts/seed-vocab.js && node scripts/seed-wordbooks.js",
+    "build:wordlists": "node scripts/build-wordlists.js",
+    "seed:full": "node scripts/seed-vocab.js && node scripts/seed-wordbooks.js && node scripts/build-wordlists.js",
+    "import:ecdict": "node scripts/import-ecdict.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.1"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.4"
+  }
+}

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#06080f" />
+    <meta name="description" content="雅思学习工作台：间隔重复闪卡、多题型测验、听力精听与 AI 记忆法" />
+    <title>雅思学习工作台 · IELTS Workbench</title>
+    <script>
+      // 在首屏渲染前应用主题，避免白屏闪烁
+      (function () {
+        try {
+          var t = localStorage.getItem('ielts_theme') || 'dark';
+          document.documentElement.setAttribute('data-theme', t);
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

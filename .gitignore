@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.env
+.env.local
+
+# 数据库（含 WAL 三件套）
+server/data/
+*.db
+*.db-wal
+*.db-shm
+
+# 上传的听力素材
+server/uploads/
+
+.DS_Store
+*.log
+.vscode/
+.idea/

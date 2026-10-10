@@ -1,0 +1,17 @@
+# 统一用 LF 存储与检出：服务器是 Linux，避免 CRLF 落到线上
+* text=auto eol=lf
+
+# 二进制文件不做换行符转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.woff binary
+*.woff2 binary
+*.mp3  binary
+*.m4a  binary
+*.db   binary
+
+# 词表 JSON 是数据文件，行尾不要动
+server/scripts/data/wordlists/*.json -text
