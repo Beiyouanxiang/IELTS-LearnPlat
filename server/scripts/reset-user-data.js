@@ -110,6 +110,28 @@ const wipe = db.transaction(() => {
 
 for (const [t, n] of wipe()) console.log(`  删除 ${String(n).padStart(6)} 行  ${t}`);
 
+// 自增 id 一起复位，否则线上第一个注册的人会拿到 id=4 这种"看起来很脏"的编号。
+// 必须在所有引用这些行的数据都删干净之后做（上面已删除，且都带 FK 级联）。
+const seqTables = [
+  ...USER_TABLES.map(([t]) => t),
+  ...OWNED_CONTENT.map(([t]) => t),
+  'invite_codes',
+  'users',
+];
+const hasSeqTable = db
+  .prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='sqlite_sequence'`)
+  .get();
+let seqReset = 0;
+if (hasSeqTable) {
+  seqReset = db.transaction(() => {
+    const stmt = db.prepare('DELETE FROM sqlite_sequence WHERE name = ?');
+    let n = 0;
+    for (const t of seqTables) n += stmt.run(t).changes;
+    return n;
+  })();
+}
+if (seqReset) console.log(`  复位 ${seqReset} 张表的自增计数（sqlite_sequence）`);
+
 console.log('\n=========== 清理后 ===========');
 for (const t of CONTENT_TABLES) {
   console.log(`  ${String(count(t)).padStart(7)}  ${t}`);
