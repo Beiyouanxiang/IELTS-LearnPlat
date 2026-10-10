@@ -7,7 +7,7 @@ import { tokenizeForFts } from './services/fts.js';
 let db;
 
 // 当前 schema 版本：结构性变更时 +1，并在 runMigrations 里补一条迁移
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 4;
 
 function getSchemaVersion() {
   const row = db
@@ -165,7 +165,7 @@ export function initDb() {
     -- ============ 听力 ============
     CREATE TABLE IF NOT EXISTS listening_materials (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      owner_id INTEGER NOT NULL,
+      owner_id INTEGER,                              -- NULL = 内置公共素材（与 reading_passages 一致）
       title TEXT NOT NULL,
       source_url TEXT,
       audio_path TEXT,
@@ -369,6 +369,73 @@ function runMigrations(currentVer) {
     ensureColumn('words', 'word_forms', 'TEXT');
     ensureColumn('word_lists', 'category', 'TEXT');
     setSchemaVersion(3);
+  }
+  if (currentVer < 4) {
+    // v4：listening_materials.owner_id 由 NOT NULL 放宽为可空。
+    //     内置公共听力素材不该挂在某个账号下（与 reading_passages / word_lists 对齐），
+    //     否则全新空库还没有任何用户时根本 seed 不出来，
+    //     而且清理用户数据时会把它当作"用户素材"级联删掉。
+    makeListeningOwnerNullable();
+    setSchemaVersion(4);
+  }
+}
+
+// SQLite 无法直接去掉 NOT NULL，只能按官方 12 步法重建表。
+// 注意：改 PRAGMA foreign_keys 必须在事务之外，且重建期间要关掉外键，
+// 否则 DROP TABLE 会被子表的引用拦住。
+function makeListeningOwnerNullable() {
+  const cols = db.prepare('PRAGMA table_info(listening_materials)').all();
+  if (!cols.length) return; // 表还没建，CREATE TABLE 里已经是可空定义
+  const owner = cols.find((c) => c.name === 'owner_id');
+  if (!owner || owner.notnull === 0) return; // 已经可空，幂等跳过
+
+  const fkWasOn = db.pragma('foreign_keys', { simple: true });
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.exec(`
+      BEGIN;
+      CREATE TABLE listening_materials_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_id INTEGER,                          -- NULL = 内置公共素材
+        title TEXT NOT NULL,
+        source_url TEXT,
+        audio_path TEXT,
+        accent TEXT,
+        level TEXT,
+        topic TEXT,
+        transcript TEXT,
+        translation TEXT,
+        duration_sec REAL,
+        segment_count INTEGER NOT NULL DEFAULT 0,
+        is_public INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+      INSERT INTO listening_materials_new
+        SELECT id, owner_id, title, source_url, audio_path, accent, level, topic,
+               transcript, translation, duration_sec, segment_count, is_public,
+               created_at, updated_at
+          FROM listening_materials;
+      DROP TABLE listening_materials;
+      ALTER TABLE listening_materials_new RENAME TO listening_materials;
+      CREATE INDEX IF NOT EXISTS idx_lmat_owner ON listening_materials(owner_id);
+      COMMIT;
+    `);
+    const violations = db.pragma('foreign_key_check');
+    if (violations.length) {
+      console.warn(`[db] migrate: 重建 listening_materials 后外键检查有 ${violations.length} 处异常`);
+    }
+    console.log('[db] migrate: listening_materials.owner_id 已放宽为可空');
+  } catch (e) {
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      /* 事务可能已结束 */
+    }
+    throw e;
+  } finally {
+    if (fkWasOn) db.pragma('foreign_keys = ON');
   }
 }
 

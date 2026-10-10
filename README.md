@@ -153,7 +153,7 @@ SMOKE_INVITE=<邀请码> node scripts/smoke-test.mjs
 
 Schema 为**版本化迁移**（`schema_version` 表 + `CURRENT_SCHEMA_VERSION`），启动时自动升级，老数据不丢。
 
-当前 **v3**，主要表：
+当前 **v4**，主要表：
 
 | 模块 | 表 |
 |---|---|
@@ -166,7 +166,11 @@ Schema 为**版本化迁移**（`schema_version` 表 + `CURRENT_SCHEMA_VERSION`�
 
 SQLite 无 `ADD COLUMN IF NOT EXISTS`，迁移用 `ensureColumn()` 幂等补列（先 `PRAGMA table_info` 再 `ALTER TABLE`）。
 
-v2 → v3 新增：`words.word_forms`（AWL 等词表以词族为单位，一个词根带多个派生形式）、`word_lists.category`（词库变多后按 基础/雅思核心/学术/话题 分组展示）。`word_forms` 同时进了 FTS 索引，所以搜 `analysing` 能命中 `analyse`。
+迁移历史：
+
+- **v2**：写作 / 阅读 / 听力题型 / 学习目标；补 `reading_questions.answer_alt`
+- **v3**：`words.word_forms`（AWL 等词表以词族为单位，一个词根带多个派生形式）、`word_lists.category`（按 基础 / 雅思核心 / 学术 / 话题 分组）。`word_forms` 同时进了 FTS 索引，所以搜 `analysing` 能命中 `analyse`
+- **v4**：`listening_materials.owner_id` 由 `NOT NULL` 放宽为可空 —— 内置公共听力素材不该挂在某个账号下（与 `reading_passages` / `word_lists` 对齐）。否则全新空库（还没有任何用户）时根本 seed 不出听力素材，且清理用户数据会把它当"用户素材"级联删掉。SQLite 不能直接去掉 `NOT NULL`，这条迁移按官方 12 步法**重建表**（关外键 → 建新表 → 拷数据 → 换名 → 重建索引 → `foreign_key_check`），已在真库上验证数据零丢失且幂等
 
 ## API
 
@@ -203,9 +207,10 @@ server/
       wordlists/        AWL / NAWL / AKL / GSL / NGSL / BNC-COCA（CC0 1.0 JSON）
     seed-vocab.js       67 个带例句的精选基础词
     seed-wordbooks.js   话题词书入库（scripts/data/wordbooks.js）
-    seed-content.js     写作题库/范文 + 阅读文章/题目 + 听力素材（幂等）
+    seed-content.js     写作题库/范文 + 阅读文章/题目 + 听力素材（幂等，内置内容 owner_id 为 NULL）
+    reset-user-data.js  清空用户数据、保留内容库（带 --yes 保护，移植开发库到生产时用）
     import-ecdict.js    ECDICT 单表导入（build-wordlists.js 的简化前身）
-    smoke-test.mjs      端到端冒烟测试（101 项）
+    smoke-test.mjs      端到端冒烟测试（101 项，npm test）
   data/ecdict.csv        ECDICT 原始数据（63 MB，需自行下载，不入库/不提交）
 web/src/
   components/          Layout / CommandPalette / AuthShell / ui.jsx(雷达·环形·柱图·Toast·抽屉) / icons.jsx
@@ -215,13 +220,51 @@ web/src/
 
 ## 部署
 
-见 `deploy/nginx-ielts.conf` 与 `server/ecosystem.config.cjs`（PM2，端口 3007）。
+架构：Node 只监听回环 `127.0.0.1:3007`，公网入口交给 Nginx；PM2 以 **fork** 模式跑（SQLite/WAL 是单写者模型，不要用 cluster）。
 
 ```bash
-cd server
+# ---- 服务器一次性初始化 ----
+cd /data/data_home/xuyifan
+git clone git@github.com:Beiyouanxiang/IELTS-LearnPlat.git
+cd IELTS-LearnPlat/server
+cp .env.example .env               # 必须改 JWT_SECRET：openssl rand -hex 32
+mkdir -p data logs uploads && chmod 700 data
+
+(cd ../server && npm install --omit=dev)
+(cd ../web    && npm install && ./node_modules/.bin/vite build)
+
+# 内容库二选一：
+#  A. 服务器上从零构建（需先下载 63 MB 的 ECDICT 到 server/data/ecdict.csv）
+npm run seed:content && npm run seed:full
+#  B. 从开发机搬一个已经建好的库（更快，且不用在服务器上跑构建）
+#     开发机: VACUUM INTO 导出快照 -> npm run seed:content -> npm run reset:userdata --yes -> scp
+#     服务器: 放到 server/data/ielts.db，chmod 600
+
 pm2 start ecosystem.config.cjs
 pm2 save
+
+# ---- 之后每次更新 ----
+cd /data/data_home/xuyifan/IELTS-LearnPlat
+git fetch origin main --prune && git reset --hard origin/main
+(cd server && npm install --omit=dev)
+(cd web    && npm install && ./node_modules/.bin/vite build)
+cd server && pm2 reload ecosystem.config.cjs    # 必须在 server/ 下执行
+curl -s http://127.0.0.1:3007/api/info
 ```
+
+> **PM2 的坑**：`pm2 reload` 必须在 `server/` 目录下执行，否则报 `File ecosystem.config.cjs not found` 但**不会让脚本失败**（服务没重启却以为成功了）。想按名字操作更稳：`pm2 reload ielts-workbench`。
+> **改服务端代码（含 schema 迁移）要 `restart` 而不是 `reload`**：`JWT_SECRET` 等 `process.env` 在启动时锁定，迁移也只在 `initDb()` 首次执行；`reload` 会沿用老 worker 的环境。
+
+Nginx：见 `deploy/nginx-ielts.conf`。文件里默认监听 8080（独立端口最省事）；如果域名可用，推荐按已有站点的惯例挂独立子域 + certbot：
+
+```bash
+sudo cp /etc/nginx/sites-available/tt-web-tools /etc/nginx/sites-available/tt-web-tools.bak.$(date +%Y%m%d-%H%M%S)
+# 新增一个 server_name ielts.transistorsandtokens.com 的 443 块，proxy_pass http://127.0.0.1:3007
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d ielts.transistorsandtokens.com
+```
+
+**注意 `add_header` 不继承**：只要在 `location` 里写了任何一个 `add_header`，`server` 级的安全头对该 location 全部失效。location 内只放业务指令。
 
 ## 已知限制
 

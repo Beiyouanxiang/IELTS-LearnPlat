@@ -115,20 +115,32 @@ for (const p of READING_PASSAGES) {
 const SAMPLE_TRANSCRIPT = `Good morning, everyone, and welcome to the city library's short introduction to our new opening hours. From the first of next month, the main reading room will open at eight thirty in the morning and close at nine in the evening on weekdays. On Saturdays we will close three hours earlier, at six o'clock, and on Sundays the library will remain closed. Please note that the children's section closes thirty minutes before the rest of the building. Borrowing limits are also changing. Adults may now take out up to twelve items at a time, an increase from the previous limit of eight, and the standard loan period will be extended from two weeks to three. Items may be renewed twice online, provided that nobody else has reserved them. Finally, I would like to mention our new study pods on the second floor. These can be booked free of charge for up to two hours a day, and bookings open seven days in advance. Thank you for listening, and please ask at the front desk if you have any questions.`;
 
 let listeningMaterialId = null;
-const findMaterial = db.prepare("SELECT id FROM listening_materials WHERE title = ? AND owner_id = 1");
-const findAnyMaterial = db.prepare("SELECT id FROM listening_materials WHERE title = ? LIMIT 1");
+const SAMPLE_TITLE = '图书馆开放时间与借阅规则（内置示例，可朗读）';
+// 内置公共素材：owner_id 为 NULL（不属于任何账号），is_public = 1 对所有人生效。
+// 与阅读文章的做法保持一致——内置内容挂在某个账号下会出两个问题：
+//   1) 全新空库（还没有任何用户）时根本 seed 不出来；
+//   2) 清理用户数据时会被当作"用户素材"级联删掉，连 segments / questions 一起没了。
+const findMaterial = db.prepare('SELECT id FROM listening_materials WHERE title = ? AND owner_id IS NULL');
 const insMaterial = db.prepare(
   `INSERT INTO listening_materials (owner_id, title, source_url, audio_path, accent, level, topic, transcript, translation, duration_sec, is_public)
-   VALUES (1, ?, NULL, NULL, 'British', 'medium', '日常场景', ?, NULL, ?, 1)`
+   VALUES (NULL, ?, NULL, NULL, 'British', 'medium', '日常场景', ?, NULL, ?, 1)`
 );
-const owner = db.prepare("SELECT id FROM users WHERE role IN ('owner','admin') ORDER BY id LIMIT 1").get();
-const SAMPLE_TITLE = '图书馆开放时间与借阅规则（内置示例，可朗读）';
-const existing = findAnyMaterial.get(SAMPLE_TITLE);
-if (!existing && owner) {
-  const info = insMaterial.run(SAMPLE_TITLE, SAMPLE_TRANSCRIPT, 120);
-  listeningMaterialId = info.lastInsertRowid;
-} else {
-  listeningMaterialId = existing?.id || null;
+// 兼容老库：早期版本把内置素材写成了 owner_id = 1，这里归正为 NULL（幂等）
+const legacyMaterial = db
+  .prepare('SELECT id FROM listening_materials WHERE title = ? AND owner_id IS NOT NULL')
+  .get(SAMPLE_TITLE);
+if (legacyMaterial) {
+  db.prepare('UPDATE listening_materials SET owner_id = NULL, is_public = 1 WHERE id = ?').run(legacyMaterial.id);
+  console.log(`听力样题：已把老库中的内置素材（id=${legacyMaterial.id}）归属归正为公共素材`);
+}
+{
+  const existing = findMaterial.get(SAMPLE_TITLE);
+  if (existing) {
+    listeningMaterialId = existing.id;
+  } else {
+    const info = insMaterial.run(SAMPLE_TITLE, SAMPLE_TRANSCRIPT, 120);
+    listeningMaterialId = info.lastInsertRowid;
+  }
 }
 
 // 为示例素材切句
@@ -154,5 +166,5 @@ console.log('===== 内容库导入完成 =====');
 console.log(`写作题库：新增 ${wpInserted} / 更新 ${wpUpdated}，共 ${WRITING_PROMPTS.length}`);
 console.log(`范文：新增 ${meInserted} / 更新 ${meUpdated}，共 ${MODEL_ESSAYS.length}`);
 console.log(`阅读文章：新增 ${rpInserted} / 更新 ${rpUpdated}，题目 ${rqCount} 道`);
-console.log(`听力样题：${listeningMaterialId ? 'ID ' + listeningMaterialId + '（含 ' + (db.prepare('SELECT segment_count n FROM listening_materials WHERE id=?').get(listeningMaterialId).n) + ' 句）' : '未创建（需要至少一个 owner 账号）'}`);
+console.log(`听力样题：${listeningMaterialId ? 'ID ' + listeningMaterialId + '（公共素材，含 ' + (db.prepare('SELECT segment_count n FROM listening_materials WHERE id=?').get(listeningMaterialId).n) + ' 句）' : '未创建'}`);
 console.log(`题库统计：写作 ${db.prepare('SELECT COUNT(*) n FROM writing_prompts').get().n} 题 / 阅读 ${db.prepare('SELECT COUNT(*) n FROM reading_passages').get().n} 篇 / 听力 ${db.prepare('SELECT COUNT(*) n FROM listening_materials').get().n} 个素材`);

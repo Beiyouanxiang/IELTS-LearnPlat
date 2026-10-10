@@ -15,7 +15,9 @@
     "seed:all": "node scripts/seed-vocab.js && node scripts/seed-wordbooks.js",
     "build:wordlists": "node scripts/build-wordlists.js",
     "seed:full": "node scripts/seed-vocab.js && node scripts/seed-wordbooks.js && node scripts/build-wordlists.js",
-    "import:ecdict": "node scripts/import-ecdict.js"
+    "import:ecdict": "node scripts/import-ecdict.js",
+    "reset:userdata": "node scripts/reset-user-data.js",
+    "test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "axios": "^1.7.7",
