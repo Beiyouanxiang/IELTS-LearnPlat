@@ -40,7 +40,7 @@ export async function chat({ provider, messages, temperature = 0.3, maxTokens } 
   const p = getProvider(provider);
   const url = `${p.baseUrl.replace(/\/$/, '')}/chat/completions`;
   const body = { model: p.model, messages, temperature };
-  if (maxTokens) body.max_tokens = maxTokens;
+  body.max_tokens = maxTokens || 4096;
 
   const resp = await axios.post(url, body, {
     headers: { Authorization: `Bearer ${p.apiKey}`, 'Content-Type': 'application/json' },
@@ -48,8 +48,7 @@ export async function chat({ provider, messages, temperature = 0.3, maxTokens } 
     validateStatus: () => true,
   });
   if (resp.status >= 400) {
-    const detail = typeof resp.data === 'string' ? resp.data : JSON.stringify(resp.data).slice(0, 300);
-    throw new Error(`LLM 调用失败 HTTP ${resp.status}: ${detail}`);
+    throw new Error(`LLM 调用失败 HTTP ${resp.status}，请稍后重试或联系管理员`);
   }
   return resp.data?.choices?.[0]?.message?.content || '';
 }

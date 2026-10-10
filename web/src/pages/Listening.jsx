@@ -3,6 +3,7 @@ import { api } from '../api.js';
 import { Empty, Skeleton, useHotkeys, useToast } from '../components/ui.jsx';
 import { speak } from '../lib/tts.js';
 import ListeningQuestions from './ListeningQuestions.jsx';
+import { useAudioUrl } from '../lib/useAudioUrl.js';
 import {
   IcoHeadphones,
   IcoPlus,
@@ -55,6 +56,7 @@ export default function Listening() {
   const [busy, setBusy] = useState(false);
 
   const [mat, setMat] = useState(null);
+  const audioUrl = useAudioUrl(mat?.audio_path);
   const [segments, setSegments] = useState([]);
   const [idx, setIdx] = useState(0);
   const [input, setInput] = useState('');
@@ -292,7 +294,7 @@ export default function Listening() {
             <>
               <audio
                 ref={audioRef}
-                src={`/${mat.audio_path}`}
+                src={audioUrl || undefined}
                 onTimeUpdate={onTimeUpdate}
                 onPlay={() => setPlaying(true)}
                 onPause={() => setPlaying(false)}

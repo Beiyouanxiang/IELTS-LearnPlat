@@ -96,7 +96,7 @@ export default function Register() {
             onChange={(e) => setForm({ ...form, confirm: e.target.value })} placeholder="••••••••" />
         </label>
         <label className="field">
-          <span>邀请码（第一位用户可留空）</span>
+          <span>邀请码（首次管理员注册使用初始化邀请码）</span>
           <input value={form.invite_code}
             onChange={(e) => setForm({ ...form, invite_code: e.target.value })} placeholder="粘贴邀请码" />
         </label>

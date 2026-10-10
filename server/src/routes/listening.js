@@ -100,6 +100,7 @@ router.get('/materials/:id', (req, res) => {
 router.post('/materials', upload.single('audio'), (req, res) => {
   const { title, source_url, transcript, translation, accent, level, topic, duration_sec } = req.body || {};
   if (!title || !String(title).trim()) {
+    if (req.file) fs.promises.unlink(req.file.path).catch(() => {});
     return res.status(400).json({ error: '请填写标题' });
   }
   const db = getDb();
@@ -164,9 +165,8 @@ router.delete('/materials/:id', (req, res) => {
   db.prepare('DELETE FROM listening_materials WHERE id = ?').run(m.id);
   // 删掉磁盘上的音频（路径必须限制在 UPLOAD_DIR 内，防目录穿越）
   if (m.audio_path) {
-    const abs = path.resolve(m.audio_path);
-    const root = path.resolve(UPLOAD_DIR, '..');
-    if (abs.startsWith(root)) fs.promises.unlink(abs).catch(() => {});
+    const filename = path.basename(m.audio_path);
+    if (m.audio_path === `uploads/${filename}`) fs.promises.unlink(path.join(UPLOAD_DIR, filename)).catch(() => {});
   }
   res.json({ ok: true });
 });
@@ -416,6 +416,7 @@ router.post('/materials/:id/questions/submit', (req, res) => {
   const db = getDb();
   const m = db.prepare('SELECT * FROM listening_materials WHERE id = ?').get(Number(req.params.id));
   if (!m) return res.status(404).json({ error: '素材不存在' });
+  if (!materialVisible(m, req.user.id)) return res.status(403).json({ error: '无权访问' });
   const answers = req.body?.answers || {};
   const durationSec = Number(req.body?.duration_sec) || 0;
 

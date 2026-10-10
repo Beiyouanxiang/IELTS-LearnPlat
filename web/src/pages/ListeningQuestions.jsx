@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api.js';
+import { useAudioUrl } from '../lib/useAudioUrl.js';
 import { Empty, Skeleton, useToast } from '../components/ui.jsx';
 import { speak, stopSpeak, ttsSupported } from '../lib/tts.js';
 import {
@@ -18,6 +19,7 @@ import {
 // 有音频就播放对应片段；没有音频（如内置示例素材）则用浏览器 TTS 朗读该句。
 export default function ListeningQuestions({ material, onExit }) {
   const toast = useToast();
+  const audioUrl = useAudioUrl(material.audio_path);
   const [data, setData] = useState(null);
   const [answers, setAnswers] = useState({});
   const [result, setResult] = useState(null);
@@ -152,7 +154,7 @@ export default function ListeningQuestions({ material, onExit }) {
       </div>
 
       {hasAudio && (
-        <audio ref={audioRef} src={`/${material.audio_path}`} onTimeUpdate={onTimeUpdate} style={{ display: 'none' }} />
+        <audio ref={audioRef} src={audioUrl || undefined} onTimeUpdate={onTimeUpdate} style={{ display: 'none' }} />
       )}
 
       {/* 播放控制 */}

@@ -8,6 +8,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { initDb } from './db.js';
+import { getDb } from './db.js';
+import { authRequired } from './auth.js';
 import { globalLimiter } from './middleware/rateLimit.js';
 import authRoutes from './routes/auth.js';
 import infoRoutes from './routes/info.js';
@@ -59,6 +61,14 @@ const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || './uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 app.use(
   '/uploads',
+  authRequired,
+  (req, res, next) => {
+    const filename = req.path.slice(1);
+    if (!filename || filename !== path.basename(filename)) return res.sendStatus(404);
+    const material = getDb().prepare('SELECT owner_id, is_public FROM listening_materials WHERE audio_path = ?').get(`uploads/${filename}`);
+    if (!material || (material.owner_id !== req.user.id && material.is_public !== 1)) return res.sendStatus(404);
+    next();
+  },
   express.static(UPLOAD_DIR, {
     setHeaders(res) {
       res.setHeader('X-Content-Type-Options', 'nosniff');

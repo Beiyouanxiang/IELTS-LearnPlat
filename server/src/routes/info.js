@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { getDb } from '../db.js';
 import { getSecretStrength } from '../auth.js';
 import { listProviders } from '../services/llm.js';
+import { authRequired, roleRequired } from '../auth.js';
 
 const router = express.Router();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -52,7 +53,7 @@ router.get('/health', (req, res) => {
 });
 
 // 仅管理员可见的安全自检
-router.get('/security', (req, res) => {
+router.get('/security', authRequired, roleRequired('admin'), (req, res) => {
   res.json({
     jwt: getSecretStrength(),
     invite_only: String(process.env.INVITE_ONLY ?? 'true') !== 'false',

@@ -11,6 +11,7 @@ server/data/
 
 # 上传的听力素材
 server/uploads/
+server/owner-bootstrap-code
 
 .DS_Store
 *.log

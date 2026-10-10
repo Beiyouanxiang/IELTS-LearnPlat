@@ -42,18 +42,21 @@ export function rateLimit({ windowMs = 60_000, max = 60, key, message } = {}) {
 }
 
 export const globalLimiter = rateLimit({
+  key: (req) => `global:${req.ip}`,
   windowMs: 60_000,
   max: 300,
   message: '请求过于频繁，请稍后再试',
 });
 
 export const authLimiter = rateLimit({
+  key: (req) => `auth:${req.ip}`,
   windowMs: 15 * 60_000,
   max: 20,
   message: '登录/注册尝试过于频繁，请 15 分钟后再试',
 });
 
 export const aiLimiter = rateLimit({
+  key: (req) => `ai:${req.user?.id || req.ip}`,
   windowMs: 60_000,
   max: 20,
   message: 'AI 调用过于频繁，请稍后再试',

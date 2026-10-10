@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+const base = process.env.BASE || 'http://127.0.0.1:49307';
+async function request(path, token, body) {
+  const response = await fetch(base + path, { method: body ? 'POST' : 'GET', headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const data = await response.json().catch(() => null);
+  return { status: response.status, data };
+}
+const rejected = await request('/api/auth/register', null, { username: 'intruder', password: 'testpass123' });
+assert.equal(rejected.status, 403);
+const owner = await request('/api/auth/register', null, { username: 'reviewowner', password: 'testpass123', invite_code: 'isolated-review-bootstrap-code' });
+assert.equal(owner.status, 201);
+assert.equal(owner.data.user.role, 'owner');
+assert.equal((await request('/api/info/security')).status, 401);
+assert.equal((await request('/api/info/security', owner.data.token)).status, 200);
+const member = await request('/api/auth/register', null, { username: 'reviewmember', password: 'testpass123', invite_code: owner.data.first_invite });
+assert.equal(member.status, 201);
+assert.equal((await request('/api/info/security', member.data.token)).status, 403);
+const form = new FormData();
+form.append('title', 'Private test audio');
+form.append('audio', new Blob(['RIFF-test-content'], { type: 'audio/wav' }), 'test.wav');
+const material = await fetch(base + '/api/listening/materials', { method: 'POST', headers: { Authorization: `Bearer ${owner.data.token}` }, body: form }).then(r => r.json());
+assert.ok(material.material?.audio_path);
+const url = base + '/' + material.material.audio_path;
+assert.equal((await fetch(url)).status, 401);
+assert.equal((await fetch(url, { headers: { Authorization: `Bearer ${member.data.token}` } })).status, 404);
+assert.equal((await fetch(url, { headers: { Authorization: `Bearer ${owner.data.token}` } })).status, 200);
+console.log('PASS: 首次管理员初始化、邀请码注册、安全接口角色权限、私有音频权限（9 项）');
+const words = await request('/api/vocab/words?page=1&size=1', owner.data.token);
+const word = words.data.words[0];
+const spelling = await request('/api/vocab/quiz/submit', owner.data.token, { results: [{ word_id: word.id, answer_id: word.id, mode: 'spell', user_input: 'totally-wrong-answer', correct: true }] });
+assert.equal(spelling.data.correct, 0);
+assert.equal((await request(`/api/listening/materials/${material.material.id}/questions/submit`, member.data.token, { answers: {} })).status, 403);
+console.log('PASS: 拼写错题不会误判正确；私有听力提交拒绝跨用户访问');

@@ -1,5 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { getDb, generateInviteCode } from '../db.js';
 import { signToken, authRequired, roleRequired } from '../auth.js';
 import { authLimiter } from '../middleware/rateLimit.js';
@@ -38,6 +40,17 @@ router.post('/register', authLimiter, (req, res) => {
 
   const userCount = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
   const isFirstUser = userCount === 0;
+  if (isFirstUser && process.env.NODE_ENV === 'production') {
+    const file = process.env.OWNER_BOOTSTRAP_FILE;
+    const expected = file && fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '';
+    const supplied = String(invite_code || '');
+    if (!expected) return res.status(503).json({ error: '管理员初始化尚未配置，请联系站点负责人' });
+    const equal = crypto.timingSafeEqual(
+      crypto.createHash('sha256').update(expected).digest(),
+      crypto.createHash('sha256').update(supplied).digest()
+    );
+    if (!equal) return res.status(403).json({ error: '首次注册需要管理员初始化邀请码' });
+  }
 
   // 非首个用户：按开关校验邀请码
   let invite = null;

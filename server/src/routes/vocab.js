@@ -517,12 +517,22 @@ router.get('/quiz', (req, res) => {
 router.post('/quiz/submit', (req, res) => {
   const { results, duration_ms } = req.body || {};
   if (!Array.isArray(results)) return res.status(400).json({ error: 'results 必须是数组' });
+  if (!results.length || results.length > 50) return res.status(400).json({ error: '请提交 1-50 道题' });
   const db = getDb();
+  const graded = [];
+  for (const r of results) {
+    const word = r && db.prepare('SELECT id, word FROM words WHERE id = ?').get(Number(r.word_id));
+    if (!word) return res.status(400).json({ error: '单词不存在' });
+    const isCorrect = r.mode === 'spell'
+      ? String(r.user_input || '').trim().toLowerCase() === word.word.toLowerCase()
+      : Number(r.answer_id) === word.id;
+    graded.push({ ...r, isCorrect });
+  }
   let correct = 0;
   const tx = db.transaction(() => {
-    for (const r of results) {
+    for (const r of graded) {
       const wid = Number(r.word_id);
-      const isCorrect = r.answer_id === r.word_id || r.correct === true;
+      const isCorrect = r.isCorrect;
       if (!wid) continue;
       if (isCorrect) correct += 1;
 

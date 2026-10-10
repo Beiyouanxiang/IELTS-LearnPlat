@@ -141,6 +141,7 @@ export default function Quiz() {
       advance({
         word_id: q.word_id,
         answer_id: q.word_id,
+        user_input: typed,
         correct: ok,
         direction: q.mode,
         mode: q.mode,

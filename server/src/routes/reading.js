@@ -108,6 +108,9 @@ router.post('/passages/:id/submit', (req, res) => {
   const id = Number(req.params.id);
   const p = db.prepare('SELECT * FROM reading_passages WHERE id = ?').get(id);
   if (!p) return res.status(404).json({ error: '文章不存在' });
+  if (!p.is_public && p.owner_id !== req.user.id && req.user.role === 'member') {
+    return res.status(403).json({ error: '无权访问该文章' });
+  }
 
   const answers = req.body?.answers;
   const durationSec = Number(req.body?.duration_sec) || 0;

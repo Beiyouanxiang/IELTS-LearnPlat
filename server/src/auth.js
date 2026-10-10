@@ -9,6 +9,7 @@
 // 生成强 secret：openssl rand -hex 32
 import jwt from 'jsonwebtoken';
 import crypto from 'node:crypto';
+import { getDb } from './db.js';
 
 const PROVIDED = process.env.JWT_SECRET;
 const NODE_ENV = process.env.NODE_ENV || 'development';
@@ -76,7 +77,9 @@ export function authRequired(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   const payload = token && verifyToken(token);
   if (!payload) return res.status(401).json({ error: '未登录或登录已过期' });
-  req.user = payload;
+  const user = getDb().prepare('SELECT id, username, role FROM users WHERE id = ?').get(payload.id);
+  if (!user) return res.status(401).json({ error: '用户不存在或登录已失效' });
+  req.user = user;
   next();
 }
 
