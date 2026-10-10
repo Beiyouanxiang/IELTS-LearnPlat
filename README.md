@@ -266,6 +266,43 @@ sudo certbot --nginx -d ielts.transistorsandtokens.com
 
 **注意 `add_header` 不继承**：只要在 `location` 里写了任何一个 `add_header`，`server` 级的安全头对该 location 全部失效。location 内只放业务指令。
 
+### 公网入口的硬约束（阿里云 + 备案）
+
+实测结论，别再走弯路：
+
+- **阿里云会按 Host / SNI 拦截未备案域名**，返回 `403` + `Server: Beaver` + 页面标题 `Non-compliance ICP Filing`。这不是 nginx 或应用的错。
+- 因此 `*.sslip.io`（公共泛解析、无需配 DNS 的临时域名方案）**在这台机器上完全不可用** —— 实测 `ielts.120.25.150.103.sslip.io`、`bookmarks.120.25.150.103.sslip.io` 全是 403。
+- **只有已备案的 `*.transistorsandtokens.com` 能过**（`exam199.` / `bookmarks.` 实测 200）。
+- 纯 IP 访问（`Host` 是 IP）不受备案拦截影响。
+
+所以正式入口只能是 `ielts.transistorsandtokens.com`：在阿里云「云解析」加一条 A 记录
+`ielts` → `120.25.150.103`，然后 `certbot --nginx -d ielts.transistorsandtokens.com`。
+父域名已备案，子域不需要单独备案。
+
+### 子路径部署（解析未就绪时的过渡方案）
+
+在 DNS 记录加好之前，可以先挂在 `http://120.25.150.103/ielts/`（纯 IP 访问不受备案限制）。
+前端已经支持子路径，**只需换一个构建参数**：
+
+```bash
+cd web
+VITE_BASE=/ielts/ npm run build       # Windows/git-bash 下要加 MSYS_NO_PATHCONV=1，否则 /ielts/ 会被当成路径转换
+```
+
+配套的 nginx 片段（加在 `/etc/nginx/sites-available/bookmark` 里，与已有的 `/ocr/`、`/pin/` 同款）：
+
+```nginx
+location = /ielts { return 308 /ielts/; }   # 保证相对路径的解析基准是 /ielts/
+location /ielts/ {
+    proxy_pass http://127.0.0.1:3007/;      # 末尾的 / 会剥掉 /ielts/ 前缀
+    client_max_body_size 60m;
+}
+```
+
+原理：`vite` 的 `base` 会同时改写资源引用（`/ielts/assets/...`）、
+`import.meta.env.BASE_URL`（`api.js` 用它拼出 `/ielts/api`）和 `<BrowserRouter>` 的 `basename`。
+切回独立子域时，用默认 base 重新构建、并删掉上面这段 location 即可。
+
 ## 已知限制
 
 - **写作评分为启发式**：基于可测量的文本特征，封顶 8.0，无法判断论证深度与切题度；需要更准确可开 AI 深度点评。

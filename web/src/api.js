@@ -1,5 +1,9 @@
 const TOKEN_KEY = 'ielts_token';
 
+// 用 vite 的 BASE_URL 当前缀：BASE_URL 总是以 / 结尾，
+// 所以拼出来是 `/api`（根路径部署）或 `/ielts/api`（子路径部署）。
+const API_BASE = `${import.meta.env.BASE_URL || '/'}api`;
+
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -22,7 +26,7 @@ export async function api(path, { method = 'GET', body, isForm = false } = {}) {
     payload = JSON.stringify(body);
   }
 
-  const res = await fetch(`/api${path}`, { method, headers, body: payload });
+  const res = await fetch(`${API_BASE}${path}`, { method, headers, body: payload });
   const text = await res.text();
   let data = null;
   try {
