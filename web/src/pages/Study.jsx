@@ -150,6 +150,18 @@ export default function Study() {
   };
 
   const next = () => setIdx((i) => Math.min(i + 1, queue.length));
+  const excludeCurrent = async () => {
+    if (!card || busy) return;
+    setBusy(true);
+    try {
+      await api('/vocab/exclude', { method: 'POST', body: { word_ids: [card.id], excluded: true } });
+      setQueue(items => items.filter((item, index) => index < idx || item.id !== card.id));
+      setTally(value => ({ ...value, total: Math.max(0, value.total - 1) }));
+      setFlipped(false);
+      toast('已移除，不再进入闪卡和测验；可在词库恢复');
+    } catch (error) { toast(error.message, 'err'); }
+    finally { setBusy(false); }
+  };
   const prev = () => setIdx((i) => Math.max(0, i - 1));
 
   useHotkeys(
@@ -312,7 +324,7 @@ export default function Study() {
                   className={`chip ${String(l.id) === String(listId) ? 'active' : ''}`}
                   onClick={() => { setListId(String(l.id)); load(String(l.id)); }}
                 >
-                  {l.name}（{l.word_count}）
+                  {l.name}（{l.word_count - (l.excluded_count || 0)}）
                 </button>
               ))}
             </div>
@@ -381,10 +393,11 @@ export default function Study() {
                 ))}
               </div>
             )}
-            {card.example_en && (
+            {card.examples?.[0] && (
               <div className="ex">
-                <div style={{ color: 'var(--text)' }}>{card.example_en}</div>
-                {card.example_cn && <div className="muted">{card.example_cn}</div>}
+                <div style={{ color: 'var(--text)' }}>{card.examples[0].en}</div>
+                {card.examples[0].cn && <div className="muted">{card.examples[0].cn}</div>}
+                <small className="muted">{card.examples[0].source}</small>
               </div>
             )}
             {flipped && (
@@ -398,6 +411,11 @@ export default function Study() {
             )}
           </div>
         </div>
+      </div>
+
+      <div className="row wrap" style={{ justifyContent: 'center', marginBottom: 12 }}>
+        <button className="btn btn-sm" disabled={busy} onClick={excludeCurrent}>太基础，移出我的学习</button>
+        <button className="btn btn-sm" onClick={() => navigate(`/words?word=${card.id}`)}>更多例句与记忆方法</button>
       </div>
 
       {flipped ? (

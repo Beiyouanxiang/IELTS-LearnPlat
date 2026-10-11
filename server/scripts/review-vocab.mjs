@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+const base = process.env.BASE;
+async function call(path, token, body, method = body ? 'POST' : 'GET') {
+  const response = await fetch(base + '/api' + path, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  return { status: response.status, data: await response.json() };
+}
+const owner = (await call('/auth/login', null, { username: 'reviewowner', password: 'testpass123' })).data.token;
+const member = (await call('/auth/login', null, { username: 'reviewmember', password: 'testpass123' })).data.token;
+const session = (await call('/vocab/session', owner)).data;
+const word = session.new[0];
+assert.ok(word);
+const before = (await call(`/vocab/words/${word.id}`, owner)).data;
+assert.equal((await call('/vocab/exclude', owner, { word_ids: [word.id], excluded: true })).status, 200);
+assert.equal((await call('/vocab/words?state=excluded', owner)).data.words.some(item => item.id === word.id), true);
+assert.equal((await call('/vocab/words?state=excluded', member)).data.words.length, 0);
+const after = (await call('/vocab/session', owner)).data;
+assert.equal([...after.new, ...after.due].some(item => item.id === word.id), false);
+assert.equal((await call('/vocab/quiz?count=50', owner)).data.questions.some(item => item.word_id === word.id || item.options?.some(option => option.id === word.id)), false);
+assert.equal((await call('/vocab/review', owner, { word_id: word.id, quality: 4 })).status, 409);
+assert.equal((await call('/vocab/exclude', owner, { word_ids: [word.id], excluded: false })).status, 200);
+assert.equal((await call('/vocab/session', owner)).data.new.some(item => item.id === word.id), true);
+assert.equal((await call(`/vocab/words/${word.id}/notes`, owner, { mnemonic: '测试我的个人联想' }, 'PATCH')).status, 200);
+const restored = (await call(`/vocab/words/${word.id}`, owner)).data;
+assert.equal(restored.word.mnemonic, '测试我的个人联想');
+assert.equal((await call(`/vocab/words/${word.id}`, member)).data.word.mnemonic, '');
+assert.equal(restored.progress.reps, before.progress?.reps || 0);
+const target = (await call('/vocab/words?q=sustainable', owner)).data.words.find(item => item.word === 'sustainable');
+assert.ok(target, 'fixture contains sustainable');
+assert.ok(target.dictionary.length > 0);
+assert.ok(target.examples.length >= 3);
+assert.ok(target.examples.filter(item => item.source === 'Tatoeba').every(item => item.url && item.author && item.license));
+console.log('PASS: 移除/恢复、跨用户隔离、闪卡与测验过滤、旧请求拒绝、笔记隔离、历史保留、词典与例句来源');

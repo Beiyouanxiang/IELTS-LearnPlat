@@ -49,9 +49,9 @@ router.get('/overview', (req, res) => {
   const goal = getOrCreateGoal(db, uid);
 
   // ---- 词汇 ----
-  const totalWords = db.prepare('SELECT COUNT(*) AS n FROM words').get().n;
+  const totalWords = db.prepare('SELECT COUNT(*) AS n FROM words').get().n - db.prepare('SELECT COUNT(*) n FROM user_word_progress WHERE user_id=? AND excluded=1').get(uid).n;
   const stateRows = db
-    .prepare('SELECT state, COUNT(*) AS n FROM user_word_progress WHERE user_id = ? GROUP BY state')
+    .prepare('SELECT state, COUNT(*) AS n FROM user_word_progress WHERE user_id = ? AND excluded=0 GROUP BY state')
     .all(uid);
   const st = { new: 0, learning: 0, review: 0, mastered: 0 };
   for (const r of stateRows) st[r.state] = r.n;
@@ -59,7 +59,7 @@ router.get('/overview', (req, res) => {
   const dueNow = db
     .prepare(
       `SELECT COUNT(*) AS n FROM user_word_progress
-        WHERE user_id = ? AND due_at IS NOT NULL AND due_at <= datetime('now') AND state != 'mastered'`
+        WHERE user_id = ? AND excluded=0 AND due_at IS NOT NULL AND due_at <= datetime('now') AND state != 'mastered'`
     )
     .get(uid).n;
   // 词汇掌握度：已掌握 + 复习中算 1，学习中算 0.5

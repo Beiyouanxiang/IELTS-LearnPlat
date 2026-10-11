@@ -7,7 +7,7 @@ import { tokenizeForFts } from './services/fts.js';
 let db;
 
 // 当前 schema 版本：结构性变更时 +1，并在 runMigrations 里补一条迁移
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 5;
 
 function getSchemaVersion() {
   const row = db
@@ -353,6 +353,15 @@ export function initDb() {
 }
 
 function runMigrations(currentVer) {
+  if (currentVer < 5) {
+    ensureColumn('user_word_progress', 'excluded', 'INTEGER NOT NULL DEFAULT 0');
+    ensureColumn('user_word_progress', 'mnemonic', "TEXT NOT NULL DEFAULT ''");
+    db.exec(`CREATE TABLE IF NOT EXISTS word_resources (
+      word_id INTEGER PRIMARY KEY REFERENCES words(id) ON DELETE CASCADE,
+      data TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+  }
   if (currentVer < 1) {
     // v1：初始结构（上面 db.exec 已建表，这里只打版本号）
     setSchemaVersion(1);
@@ -378,6 +387,7 @@ function runMigrations(currentVer) {
     makeListeningOwnerNullable();
     setSchemaVersion(4);
   }
+  if (currentVer < 5) setSchemaVersion(5);
 }
 
 // SQLite 无法直接去掉 NOT NULL，只能按官方 12 步法重建表。

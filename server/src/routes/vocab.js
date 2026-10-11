@@ -21,6 +21,9 @@ function parseJsonArray(s) {
 
 function rowToWord(r) {
   if (!r) return null;
+  const resourceRow = getDb().prepare('SELECT data FROM word_resources WHERE word_id = ?').get(r.id);
+  let resources = {};
+  try { resources = JSON.parse(resourceRow?.data || '{}'); } catch {}
   return {
     id: r.id,
     word: r.word,
@@ -41,6 +44,13 @@ function rowToWord(r) {
     difficulty: r.difficulty,
     audio_uk: r.audio_uk,
     audio_us: r.audio_us,
+    examples: [
+      ...(r.example_en ? [{ en: r.example_en, cn: r.example_cn, source: '项目原有例句' }] : []),
+      ...(resources.examples || []),
+    ].filter((example, index, items) => items.findIndex(item => item.en === example.en) === index),
+    dictionary: resources.dictionary || [],
+    excluded: !!r.excluded,
+    mnemonic: r.mnemonic || '',
   };
 }
 
@@ -52,7 +62,9 @@ router.get('/lists', (req, res) => {
       `SELECT l.*,
               (SELECT COUNT(*) FROM user_word_progress p
                 JOIN word_list_items i ON i.word_id = p.word_id
-               WHERE i.list_id = l.id AND p.user_id = @uid AND p.state = 'mastered') AS mastered_count
+               WHERE i.list_id = l.id AND p.user_id = @uid AND p.state = 'mastered' AND p.excluded=0) AS mastered_count,
+              (SELECT COUNT(*) FROM user_word_progress p JOIN word_list_items i ON i.word_id=p.word_id
+               WHERE i.list_id=l.id AND p.user_id=@uid AND p.excluded=1) AS excluded_count
          FROM word_lists l
         WHERE l.is_public = 1 OR l.owner_id = @uid
         ORDER BY l.position, l.id`
@@ -75,11 +87,11 @@ router.get('/lists/:id', (req, res) => {
 
   const rows = db
     .prepare(
-      `SELECT w.*, p.state, p.is_starred, p.correct_count, p.wrong_count, p.due_at
+      `SELECT w.*, p.state, p.is_starred, p.correct_count, p.wrong_count, p.due_at, p.excluded
          FROM word_list_items i
          JOIN words w ON w.id = i.word_id
          LEFT JOIN user_word_progress p ON p.word_id = w.id AND p.user_id = @uid
-        WHERE i.list_id = @lid
+        WHERE i.list_id = @lid AND COALESCE(p.excluded, 0)=0
         ORDER BY i.position, w.freq_rank IS NULL, w.freq_rank, w.id
         LIMIT @size OFFSET @offset`
     )
@@ -89,7 +101,7 @@ router.get('/lists/:id', (req, res) => {
     list,
     page,
     size,
-    total: list.word_count,
+    total: db.prepare(`SELECT COUNT(*) n FROM word_list_items i LEFT JOIN user_word_progress p ON p.word_id=i.word_id AND p.user_id=@uid WHERE i.list_id=@lid AND COALESCE(p.excluded,0)=0`).get({ uid: req.user.id, lid: list.id }).n,
     words: rows.map((r) => ({
       ...rowToWord(r),
       progress: r.state
@@ -111,7 +123,7 @@ router.get('/words', (req, res) => {
   const state = String(req.query.state || '').trim();
   const listId = Number(req.query.list_id) || null;
 
-  const where = [];
+  const where = [state === 'excluded' ? 'p.excluded = 1' : 'COALESCE(p.excluded, 0) = 0'];
   const params = { uid: req.user.id, size, offset };
   let from = 'FROM words w LEFT JOIN user_word_progress p ON p.word_id = w.id AND p.user_id = @uid';
   if (listId) {
@@ -136,6 +148,10 @@ router.get('/words', (req, res) => {
       params.like = `%${q}%`;
     }
   }
+  if (listId && q) {
+    where.push('EXISTS (SELECT 1 FROM word_list_items li WHERE li.word_id = w.id AND li.list_id = @lid)');
+    params.lid = listId;
+  }
   if (topic) {
     where.push('w.topic = @topic');
     params.topic = topic;
@@ -157,7 +173,7 @@ router.get('/words', (req, res) => {
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const rows = db
     .prepare(
-      `SELECT w.*, p.state, p.is_starred ${from} ${whereSql}
+      `SELECT w.*, p.state, p.is_starred, p.excluded ${from} ${whereSql}
         ORDER BY ${params.fts ? 'rank' : 'w.freq_rank IS NULL, w.freq_rank, w.word'}
         LIMIT @size OFFSET @offset`
     )
@@ -172,7 +188,7 @@ router.get('/words/:id', (req, res) => {
   const row = db
     .prepare(
       `SELECT w.*, p.state, p.ease, p.interval_days, p.reps, p.lapses, p.due_at,
-              p.correct_count, p.wrong_count, p.is_starred
+              p.correct_count, p.wrong_count, p.is_starred, p.excluded, p.mnemonic
          FROM words w
          LEFT JOIN user_word_progress p ON p.word_id = w.id AND p.user_id = ?
         WHERE w.id = ?`
@@ -196,6 +212,31 @@ router.get('/words/:id', (req, res) => {
         }
       : null,
   });
+});
+
+// 个人排除和助记笔记：公共词条与历史进度均保留。
+router.post('/exclude', (req, res) => {
+  const ids = req.body?.word_ids;
+  if (!Array.isArray(ids) || !ids.length || ids.length > 100 || ids.some(id => !Number.isSafeInteger(id) || id <= 0) || typeof req.body?.excluded !== 'boolean') {
+    return res.status(400).json({ error: '请选择 1-100 个单词并指定移除或恢复' });
+  }
+  const db = getDb();
+  if (ids.some(id => !db.prepare('SELECT id FROM words WHERE id = ?').get(id))) return res.status(404).json({ error: '单词不存在' });
+  const statement = db.prepare(`INSERT INTO user_word_progress (user_id, word_id, excluded) VALUES (?, ?, ?)
+    ON CONFLICT(user_id, word_id) DO UPDATE SET excluded=excluded.excluded, updated_at=datetime('now')`);
+  db.transaction(() => ids.forEach(id => statement.run(req.user.id, id, req.body.excluded ? 1 : 0)))();
+  res.json({ ok: true, count: ids.length });
+});
+
+router.patch('/words/:id/notes', (req, res) => {
+  const text = req.body?.mnemonic;
+  if (typeof text !== 'string' || text.length > 2000) return res.status(400).json({ error: '笔记最多 2000 字' });
+  const db = getDb();
+  const id = Number(req.params.id);
+  if (!db.prepare('SELECT id FROM words WHERE id=?').get(id)) return res.sendStatus(404);
+  db.prepare(`INSERT INTO user_word_progress (user_id, word_id, mnemonic) VALUES (?, ?, ?)
+    ON CONFLICT(user_id, word_id) DO UPDATE SET mnemonic=excluded.mnemonic, updated_at=datetime('now')`).run(req.user.id, id, text);
+  res.json({ ok: true });
 });
 
 router.get('/search', (req, res) => {
@@ -241,6 +282,7 @@ router.get('/session', (req, res) => {
          ${listId ? 'JOIN word_list_items i ON i.word_id = w.id AND i.list_id = @lid' : ''}
         WHERE p.user_id = @uid AND p.due_at IS NOT NULL AND p.due_at <= datetime('now')
           AND p.state != 'mastered'
+          AND p.excluded = 0
         ORDER BY p.due_at
         LIMIT @limit`
     )
@@ -252,7 +294,7 @@ router.get('/session', (req, res) => {
          FROM words w
          ${listJoin}
          LEFT JOIN user_word_progress p ON p.word_id = w.id AND p.user_id = @uid
-        WHERE p.word_id IS NULL
+        WHERE (p.word_id IS NULL OR (p.state = 'new' AND p.reps = 0)) AND COALESCE(p.excluded, 0) = 0
         ORDER BY w.freq_rank IS NULL, w.freq_rank, w.id
         LIMIT @limit`
     )
@@ -276,6 +318,7 @@ router.post('/review', (req, res) => {
   const db = getDb();
   const word = db.prepare('SELECT id, word FROM words WHERE id = ?').get(wid);
   if (!word) return res.status(404).json({ error: '单词不存在' });
+  if (db.prepare('SELECT excluded FROM user_word_progress WHERE user_id=? AND word_id=?').get(req.user.id, wid)?.excluded) return res.status(409).json({ error: '单词已移除，请先恢复学习' });
 
   const q = normalizeQuality(quality);
   const prev = db
@@ -381,7 +424,7 @@ router.get('/starred', (req, res) => {
     .prepare(
       `SELECT w.*, p.state FROM user_word_progress p
          JOIN words w ON w.id = p.word_id
-        WHERE p.user_id = ? AND p.is_starred = 1
+        WHERE p.user_id = ? AND p.is_starred = 1 AND p.excluded = 0
         ORDER BY p.updated_at DESC LIMIT 500`
     )
     .all(req.user.id);
@@ -397,7 +440,7 @@ router.get('/wrong', (req, res) => {
       `SELECT w.*, p.state, p.is_starred, p.correct_count, p.wrong_count, p.last_reviewed_at, p.due_at
          FROM user_word_progress p
          JOIN words w ON w.id = p.word_id
-        WHERE p.user_id = ? AND p.wrong_count > 0
+        WHERE p.user_id = ? AND p.wrong_count > 0 AND p.excluded = 0
         ORDER BY p.wrong_count DESC, p.updated_at DESC
         LIMIT ?`
     )
@@ -406,7 +449,7 @@ router.get('/wrong', (req, res) => {
   const agg = db
     .prepare(
       `SELECT COALESCE(SUM(wrong_count), 0) AS total_wrong, COUNT(*) AS n
-         FROM user_word_progress WHERE user_id = ? AND wrong_count > 0`
+         FROM user_word_progress WHERE user_id = ? AND wrong_count > 0 AND excluded=0`
     )
     .get(req.user.id);
 
@@ -442,10 +485,11 @@ router.get('/quiz', (req, res) => {
          FROM words w
          ${listId ? 'JOIN word_list_items i ON i.word_id = w.id AND i.list_id = @lid' : ''}
         WHERE w.meaning_cn IS NOT NULL AND w.meaning_cn != ''
+          AND NOT EXISTS (SELECT 1 FROM user_word_progress p WHERE p.user_id=@uid AND p.word_id=w.id AND p.excluded=1)
         ORDER BY RANDOM()
         LIMIT @limit`
     )
-    .all({ lid: listId, limit: poolLimit });
+    .all({ lid: listId, limit: poolLimit, uid: req.user.id });
 
   const minPool = mode === 'spell' ? 1 : 4;
   if (pool.length < minPool) {
@@ -523,6 +567,7 @@ router.post('/quiz/submit', (req, res) => {
   for (const r of results) {
     const word = r && db.prepare('SELECT id, word FROM words WHERE id = ?').get(Number(r.word_id));
     if (!word) return res.status(400).json({ error: '单词不存在' });
+    if (db.prepare('SELECT excluded FROM user_word_progress WHERE user_id=? AND word_id=?').get(req.user.id, word.id)?.excluded) return res.status(409).json({ error: '测验中有已移除的单词，请重新开始测验' });
     const isCorrect = r.mode === 'spell'
       ? String(r.user_input || '').trim().toLowerCase() === word.word.toLowerCase()
       : Number(r.answer_id) === word.id;
@@ -582,21 +627,22 @@ router.get('/stats', (req, res) => {
   const byState = db
     .prepare(
       `SELECT state, COUNT(*) AS n FROM user_word_progress
-        WHERE user_id = ? GROUP BY state`
+        WHERE user_id = ? AND excluded=0 GROUP BY state`
     )
     .all(uid);
   const stateMap = { new: 0, learning: 0, review: 0, mastered: 0 };
   for (const r of byState) stateMap[r.state] = r.n;
 
-  const totalWords = db.prepare('SELECT COUNT(*) AS n FROM words').get().n;
-  const touched = db.prepare('SELECT COUNT(*) AS n FROM user_word_progress WHERE user_id = ?').get(uid).n;
+  const excludedCount = db.prepare('SELECT COUNT(*) n FROM user_word_progress WHERE user_id=? AND excluded=1').get(uid).n;
+  const totalWords = db.prepare('SELECT COUNT(*) AS n FROM words').get().n - excludedCount;
+  const touched = db.prepare('SELECT COUNT(*) AS n FROM user_word_progress WHERE user_id = ? AND excluded=0').get(uid).n;
   const starred = db
-    .prepare('SELECT COUNT(*) AS n FROM user_word_progress WHERE user_id = ? AND is_starred = 1')
+    .prepare('SELECT COUNT(*) AS n FROM user_word_progress WHERE user_id = ? AND is_starred = 1 AND excluded=0')
     .get(uid).n;
   const dueNow = db
     .prepare(
       `SELECT COUNT(*) AS n FROM user_word_progress
-        WHERE user_id = ? AND due_at IS NOT NULL AND due_at <= datetime('now') AND state != 'mastered'`
+        WHERE user_id = ? AND excluded=0 AND due_at IS NOT NULL AND due_at <= datetime('now') AND state != 'mastered'`
     )
     .get(uid).n;
 

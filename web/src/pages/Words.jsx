@@ -23,6 +23,7 @@ const STATE_FILTERS = [
   { k: 'review', label: '复习中' },
   { k: 'mastered', label: '已掌握' },
   { k: 'starred', label: '生词本' },
+  { k: 'excluded', label: '已移除（可恢复）' },
 ];
 
 const STATE_COLOR = { new: '#69739a', learning: '#fbbf24', review: '#a78bfa', mastered: '#34d399' };
@@ -46,6 +47,9 @@ export default function Words() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [ai, setAi] = useState(null);
   const [aiBusy, setAiBusy] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [mnemonic, setMnemonic] = useState('');
+  const [excludeBusy, setExcludeBusy] = useState(false);
 
   useEffect(() => {
     api('/vocab/lists').then((d) => setLists(d.lists || [])).catch(() => {});
@@ -65,6 +69,7 @@ export default function Words() {
       if (listId) qs.set('list_id', listId);
       const res = await api(`/vocab/words?${qs}`);
       setData(res);
+      setSelected([]);
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -85,6 +90,7 @@ export default function Words() {
       try {
         const d = await api(`/vocab/words/${id}`);
         setDetail(d);
+        setMnemonic(d.word.mnemonic || '');
       } catch (e) {
         setErr(e.message);
         setDetail(null);
@@ -143,6 +149,25 @@ export default function Words() {
     }
   };
 
+  const excludeWords = async (ids, excluded) => {
+    if (!ids.length || excludeBusy) return;
+    setExcludeBusy(true);
+    try {
+      await api('/vocab/exclude', { method: 'POST', body: { word_ids: ids, excluded } });
+      toast(excluded ? `已从我的学习中移除 ${ids.length} 个词，可随时恢复` : '已恢复学习');
+      if (detail && ids.includes(detail.word.id)) closeDetail();
+      await load();
+    } catch (error) { toast(error.message, 'err'); }
+    finally { setExcludeBusy(false); }
+  };
+
+  const saveMnemonic = async () => {
+    try {
+      await api(`/vocab/words/${detail.word.id}/notes`, { method: 'PATCH', body: { mnemonic } });
+      toast('个人助记已保存');
+    } catch (error) { toast(error.message, 'err'); }
+  };
+
   const totalPages = data ? Math.max(1, Math.ceil(data.total / size)) : 1;
 
   // 词库按分组归类展示（词库多起来后平铺一行会很长）。
@@ -185,6 +210,21 @@ export default function Words() {
       </div>
 
       {err && <div className="msg error">{err}</div>}
+
+      {data?.words?.length > 0 && <div className="card" style={{ marginBottom: 12 }}>
+        <div className="row wrap" style={{ gap: 12 }}>
+          <label className="row"><input type="checkbox" style={{ width: 'auto' }} checked={selected.length === data.words.length}
+            onChange={event => setSelected(event.target.checked ? data.words.map(word => word.id) : [])} />选择本页全部</label>
+          <button className="btn btn-sm" disabled={!selected.length || excludeBusy} onClick={() => excludeWords(selected, state !== 'excluded')}>
+            {state === 'excluded' ? '恢复所选词' : '从我的学习中移除所选词'}（{selected.length}）
+          </button>
+          <span className="muted">不再进入闪卡和测验；在“已移除”中恢复。</span>
+        </div>
+        <div className="row wrap" style={{ gap: 10, marginTop: 10 }}>
+          {data.words.map(word => <label className="row" key={word.id} style={{ gap: 5 }}><input type="checkbox" style={{ width: 'auto' }}
+            checked={selected.includes(word.id)} onChange={event => setSelected(ids => event.target.checked ? [...ids, word.id] : ids.filter(id => id !== word.id))} />{word.word}</label>)}
+        </div>
+      </div>}
 
       <div className="card rise" style={{ animationDelay: '40ms' }}>
         <div className="row" style={{ marginBottom: 14 }}>
@@ -237,7 +277,7 @@ export default function Words() {
                     onClick={() => { setListId(String(l.id)); setPage(1); }}
                     title={l.description || ''}
                   >
-                    {l.name}（{l.word_count}）
+                    {l.name}（{l.word_count - (l.excluded_count || 0)}）
                   </button>
                 ))}
               </div>
@@ -383,6 +423,9 @@ export default function Words() {
             </div>
 
             <p style={{ fontSize: 16, marginTop: 14 }}>{detail.word.meaning_cn || '（暂无释义）'}</p>
+            <button className="btn btn-sm" disabled={excludeBusy} onClick={() => excludeWords([detail.word.id], !detail.word.excluded)}>
+              {detail.word.excluded ? '恢复学习这个词' : '这个词太基础，从我的学习中移除'}
+            </button>
 
             <div className="row wrap" style={{ gap: 6, marginBottom: 14 }}>
               {detail.word.pos && <span className="tag gray">{detail.word.pos}</span>}
@@ -458,18 +501,31 @@ export default function Words() {
               </div>
             )}
 
-            {detail.word.example_en && (
-              <div className="card" style={{ background: 'var(--surface-hi)', boxShadow: 'none', marginBottom: 14 }}>
-                <div className="row-between" style={{ marginBottom: 8 }}>
-                  <span className="muted">例句</span>
-                  <button className="btn btn-ghost btn-sm" onClick={() => speak(detail.word.example_en)}>
-                    <IcoSpeaker style={{ width: 14, height: 14 }} /> 朗读
-                  </button>
-                </div>
-                <div style={{ fontSize: 14 }}>{detail.word.example_en}</div>
-                {detail.word.example_cn && <div className="muted" style={{ marginTop: 4 }}>{detail.word.example_cn}</div>}
-              </div>
-            )}
+            {detail.word.dictionary?.length > 0 && <div className="card" style={{ marginBottom: 14 }}>
+              <h3>开放词典 · 英文释义</h3>
+              {detail.word.dictionary.map((sense, index) => <div key={index} style={{ marginTop: 10 }}>
+                <span className="tag gray">{{ n: '名词', v: '动词', a: '形容词', s: '形容词', r: '副词' }[sense.pos] || sense.pos}</span> {sense.definition}
+                {sense.synonyms?.length > 0 && <div className="muted">同义词：{sense.synonyms.join(' · ')}</div>}
+              </div>)}
+              <a href="https://en-word.net/" target="_blank" rel="noopener noreferrer">Open English WordNet 2025 · CC BY 4.0</a>
+            </div>}
+            {(detail.word.examples || []).map((example, index) => <div className="card" key={example.en} style={{ marginBottom: 14 }}>
+              <div className="row-between"><span className="muted">例句 {index + 1}</span><button className="btn btn-ghost btn-sm" onClick={() => speak(example.en)}><IcoSpeaker />朗读</button></div>
+              <p>{example.en}</p>{example.cn && <p className="muted">{example.cn}</p>}
+              <small className="muted">{example.url ? <a href={example.url} target="_blank" rel="noopener noreferrer">{example.source}</a> : example.source}{example.author ? ` · ${example.author}` : ''}{example.license ? ` · ${example.license}` : ''}</small>
+              {example.translation_url && <div><small className="muted"><a href={example.translation_url} target="_blank" rel="noopener noreferrer">译文原句</a> · {example.translation_author} · CC BY 2.0 FR</small></div>}
+            </div>)}
+            <div className="card" style={{ marginBottom: 14 }}>
+              <h3>把这个词记住</h3>
+              <p>先遮住释义，主动回忆中文含义；再用自己的生活写一句话，隔几天回来复习。</p>
+              {detail.word.examples?.[0] && <details><summary>例句挖空 · 试着填入单词</summary>
+                <p>{detail.word.examples[0].en.replace(new RegExp(`\\b${detail.word.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi'), '______')}</p>
+              </details>}
+              {detail.word.word_forms?.length > 0 && <p className="muted">词族一起记：{detail.word.word_forms.join(' · ')}</p>}
+              <label className="field"><span>我的助记（联想或自己造句）</span><textarea maxLength={2000} value={mnemonic} onChange={event => setMnemonic(event.target.value)} /></label>
+              <button className="btn btn-sm" onClick={saveMnemonic}>保存个人助记</button>
+              <div><small><a href="https://docs.ankiweb.net/background.html" target="_blank" rel="noopener noreferrer">方法参考：主动回忆与间隔复习</a></small></div>
+            </div>
 
             <button className="btn btn-primary btn-block" disabled={aiBusy} onClick={explain}>
               <IcoBrain /> {aiBusy ? 'AI 生成中…' : 'AI 记忆法（词根 / 联想 / 搭配）'}
